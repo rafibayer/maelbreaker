@@ -1,8 +1,14 @@
 use std::{error::Error, fmt::Debug};
 
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-pub type Try = core::result::Result<(), Box<dyn Error>>;
+use crate::payload;
+
+pub type Try = Result<(), Box<dyn Error>>;
+pub type SyncTry = Result<(), Box<dyn Error + Send + Sync>>;
+
+pub trait Payload: std::fmt::Debug + Serialize + DeserializeOwned + Send + 'static {}
+impl<P: std::fmt::Debug + Serialize + DeserializeOwned + Send + 'static> Payload for P {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Body<Payload> {
@@ -22,11 +28,16 @@ pub struct Message<Payload> {
 
 impl<Payload> Message<Payload> {
     pub fn into_reply(self, payload: Payload) -> Message<Payload> {
+        let next_id = self.body.msg_id.map(|id| id + 1);
+        self.into_reply_with_id(payload, next_id)
+    }
+
+    pub fn into_reply_with_id(self, payload: Payload, msg_id: Option<usize>) -> Message<Payload> {
         Message {
             src: self.dest,
             dest: self.src,
             body: Body {
-                msg_id: self.body.msg_id.map(|id| id + 1),
+                msg_id,
                 in_reply_to: self.body.msg_id,
                 payload,
             },
@@ -34,15 +45,15 @@ impl<Payload> Message<Payload> {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum Init {
-    Init {
-        node_id: String,
-        node_ids: Vec<String>,
-    },
-    InitOk,
-}
+payload!(
+    pub enum Init {
+        Init {
+            node_id: String,
+            node_ids: Vec<String>,
+        },
+        InitOk,
+    }
+);
 
 #[cfg(test)]
 mod tests {

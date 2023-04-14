@@ -85,6 +85,6 @@ impl Node<Payload> for BroadcastNode {
     }
 }
 
-fn main() {
-    run::<Payload, BroadcastNode>().unwrap();
+fn main() -> Try {
+    run::<Payload, BroadcastNode>()
 }

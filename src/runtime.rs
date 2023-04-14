@@ -1,26 +1,23 @@
 use std::{
-    error::Error,
     io::{stdin, stdout, BufRead, Write},
     sync::mpsc::{channel, Receiver, Sender},
     thread,
 };
 
-use serde::{de::DeserializeOwned, Serialize};
-
 const EOI: &str = "EOI";
 
 use crate::{
     node::Node,
-    types::{Body, Init, Message, Try},
+    types::{Init, Message, Payload, SyncTry, Try},
 };
 
 pub fn run<P, N>() -> Try
 where
-    P: std::fmt::Debug + Serialize + DeserializeOwned + Send + 'static,
+    P: Payload,
     N: Node<P>,
 {
     let (stdin_tx, stdin_rx) = channel();
-    let (stdout_tx, stdout_rx) = channel::<String>();
+    let (stdout_tx, stdout_rx) = channel();
 
     let stdin_handle = thread::spawn(move || {
         let stdin = stdin().lock().lines();
@@ -39,7 +36,7 @@ where
         }
     });
 
-    run_internal::<P, N>(stdout_tx, stdin_rx).unwrap();
+    run_internal::<P, N>(stdout_tx, stdin_rx)?;
 
     stdin_handle.join().unwrap();
     stdout_handle.join().unwrap();
@@ -47,15 +44,12 @@ where
     Ok(())
 }
 
-fn run_internal<P, N>(tx: Sender<String>, rx: Receiver<String>) -> Result<(), Box<dyn Error>>
+fn run_internal<P, N>(tx: Sender<String>, rx: Receiver<String>) -> Try
 where
-    P: std::fmt::Debug + Serialize + DeserializeOwned + Send + 'static,
+    P: Payload,
     N: Node<P>,
 {
-    eprintln!("Starting runtime...");
-
-    eprintln!("Waiting for init message");
-
+    eprintln!("Starting runtime...\nWaiting for init message");
     let init = &rx.recv()?;
     eprintln!("Got init: {init}");
     let init: Message<Init> = serde_json::from_str(init)?;
@@ -71,29 +65,33 @@ where
     let reply = init.into_reply(Init::InitOk);
 
     eprintln!("Starting outbound processing and sending init_ok");
-    let outbound = thread::spawn(move || {
+    let outbound = thread::spawn::<_, SyncTry>(move || {
         // send the init_ok
-        let mut json = serde_json::to_string(&reply).unwrap();
+        let mut json = serde_json::to_string(&reply)?;
         eprintln!("Writing init_ok: {json}");
-        tx.send(json).unwrap();
+        tx.send(json)?;
 
         // reply to other messages
         loop {
-            match node_receiver.recv() {
-                Ok(outbound) => {
-                    json = serde_json::to_string(&outbound).unwrap();
-                    eprintln!("Writing outbound message: {json}");
-                    tx.send(json).unwrap();
-                }
-                Err(e) => {
-                    eprintln!("{:#?}", e);
-                    return;
-                }
-            }
+            let outbound = node_receiver.recv()?;
+            json = serde_json::to_string(&outbound)?;
+            eprintln!("Writing outbound message: {json}");
+            tx.send(json)?;
         }
     });
 
     eprintln!("Starting inbound processing");
+    process_input(rx, &mut node)?;
+
+    eprintln!("Shutting down...");
+    cleanup(node, outbound)
+}
+
+fn process_input<P, N>(rx: Receiver<String>, node: &mut N) -> Try
+where
+    P: Payload,
+    N: Node<P>,
+{
     for line in rx {
         if line == EOI {
             eprintln!("Got EOI");
@@ -106,79 +104,62 @@ where
         node.handle_message(message)?;
     }
 
-    eprintln!("Shutting down...");
-    cleanup(node, outbound)
+    Ok(())
 }
 
-fn cleanup<P, N>(node: N, outbound: thread::JoinHandle<()>) -> Result<(), Box<dyn Error>>
+fn cleanup<P, N>(node: N, outbound: thread::JoinHandle<SyncTry>) -> Try
 where
-    P: Serialize + DeserializeOwned + Send + 'static,
+    P: Payload,
     N: Node<P>,
 {
     drop(node);
-    if let Err(outbound_err) = outbound.join() {
-        eprintln!("{:#?}", outbound_err);
-    }
+    outbound
+        .join()
+        .map_err(|e| format!("outbound thread error: {e:#?}"))?
+        .map_err(|_| "error processing error :~)")?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
 
-    use std::{sync::mpsc::Sender, thread::JoinHandle};
+    use std::{error::Error, sync::mpsc::Sender, thread::JoinHandle};
 
-    use serde::Deserialize;
+    use crate::{payload, types::Body};
 
     use super::*;
 
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    #[serde(tag = "type", rename_all = "snake_case")]
-    enum EchoPayload {
-        Echo { echo: String },
-        EchoOk { echo: String },
-    }
+    payload!(
+        enum Payload {
+            Echo { echo: String },
+            EchoOk { echo: String },
+        }
+    );
 
     struct EchoNode {
-        network: Sender<Message<EchoPayload>>,
+        network: Sender<Message<Payload>>,
+        seq: usize,
     }
 
-    impl Node<EchoPayload> for EchoNode {
+    impl Node<Payload> for EchoNode {
         fn from_init(
-            network: Sender<Message<EchoPayload>>,
+            network: Sender<Message<Payload>>,
             _node_id: String,
             _node_ids: Vec<String>,
         ) -> Self {
-            EchoNode { network }
+            EchoNode { network, seq: 0 }
         }
 
-        fn handle_message(&mut self, msg: Message<EchoPayload>) -> Result<(), Box<dyn Error>> {
-            let Message {
-                src,
-                dest,
-                body:
-                    Body {
-                        msg_id,
-                        in_reply_to: _,
-                        payload: EchoPayload::Echo { echo },
-                    },
-            } = msg else {
+        fn handle_message(&mut self, msg: Message<Payload>) -> Try {
+            let Payload::Echo { echo } = &msg.body.payload else {
                 return Err("expected echo")?;
             };
 
-            let reply = Message {
-                src: dest,
-                dest: src,
-                body: Body {
-                    in_reply_to: msg_id,
-                    msg_id: None,
-                    payload: EchoPayload::EchoOk { echo: echo },
-                },
-            };
+            let echo = echo.clone();
+            let reply = msg.into_reply(Payload::EchoOk { echo });
 
-            self.network
-                .send(reply)
-                .map_err(|_| "failed to send response")?;
-
+            self.seq += 1;
+            self.network.send(reply)?;
             Ok(())
         }
     }
@@ -231,14 +212,14 @@ mod tests {
             body: Body {
                 msg_id: Some(3),
                 in_reply_to: None,
-                payload: EchoPayload::Echo {
+                payload: Payload::Echo {
                     echo: "ding-dong!".into(),
                 },
             },
         };
 
         input.send(serde_json::to_string(&echo)?)?;
-        let _: Message<EchoPayload> = serde_json::from_str(&output.recv()?)?;
+        let _: Message<Payload> = serde_json::from_str(&output.recv()?)?;
         Ok(())
     }
 
@@ -247,7 +228,7 @@ mod tests {
         let (stdin_tx, stdin_rx) = channel();
 
         let runtime = thread::spawn(move || {
-            run_internal::<EchoPayload, EchoNode>(stdout_tx, stdin_rx).unwrap();
+            run_internal::<Payload, EchoNode>(stdout_tx, stdin_rx).unwrap();
         });
 
         (runtime, stdin_tx, stdout_rx)

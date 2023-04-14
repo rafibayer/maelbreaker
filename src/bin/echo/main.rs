@@ -1,11 +1,10 @@
-use std::sync::mpsc::Sender;
-
 use maelbreaker::{
     node::Node,
     payload,
     runtime::run,
     types::{Message, Try},
 };
+use std::sync::mpsc::Sender;
 
 payload!(
     enum Payload {
@@ -16,16 +15,11 @@ payload!(
 
 struct EchoNode {
     network: Sender<Message<Payload>>,
-    seq: usize,
 }
 
 impl Node<Payload> for EchoNode {
-    fn from_init(
-        network: Sender<Message<Payload>>,
-        _node_id: String,
-        _node_ids: Vec<String>,
-    ) -> Self {
-        EchoNode { network, seq: 0 }
+    fn from_init(network: Sender<Message<Payload>>, _: String, _: Vec<String>) -> Self {
+        EchoNode { network }
     }
 
     fn handle_message(&mut self, msg: Message<Payload>) -> Try {
@@ -35,13 +29,10 @@ impl Node<Payload> for EchoNode {
 
         let echo = echo.clone();
         let reply = msg.into_reply(Payload::EchoOk { echo });
-
-        self.seq += 1;
-        self.network.send(reply)?;
-        Ok(())
+        Ok(self.network.send(reply)?)
     }
 }
 
-fn main() {
-    run::<Payload, EchoNode>().unwrap();
+fn main() -> Try {
+    run::<Payload, EchoNode>()
 }
