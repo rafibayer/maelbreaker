@@ -1,6 +1,8 @@
-use std::fmt::Debug;
+use std::{error::Error, fmt::Debug};
 
 use serde::{Deserialize, Serialize};
+
+pub type Try = core::result::Result<(), Box<dyn Error>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Body<Payload> {
@@ -16,6 +18,20 @@ pub struct Message<Payload> {
     pub src: String,
     pub dest: String,
     pub body: Body<Payload>,
+}
+
+impl<Payload> Message<Payload> {
+    pub fn into_reply(self, payload: Payload) -> Message<Payload> {
+        Message {
+            src: self.dest,
+            dest: self.src,
+            body: Body {
+                msg_id: self.body.msg_id.map(|id| id + 1),
+                in_reply_to: self.body.msg_id,
+                payload,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,0 +1,1 @@
+/home/rafibayer/maelstrom/maelstrom serve

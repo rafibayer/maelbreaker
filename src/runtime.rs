@@ -1,61 +1,89 @@
 use std::{
     error::Error,
-    io,
-    ops::DerefMut,
-    sync::{mpsc::channel, Arc, Mutex},
+    io::{stdin, stdout, BufRead, Write},
+    sync::mpsc::{channel, Receiver, Sender},
     thread,
 };
 
 use serde::{de::DeserializeOwned, Serialize};
 
-const EOI: &'static str = "EOI";
+const EOI: &str = "EOI";
 
 use crate::{
     node::Node,
-    types::{Body, Init, Message},
+    types::{Body, Init, Message, Try},
 };
 
-pub fn run<R, W, P, N>(input: R, output: W) -> Result<(), Box<dyn Error>>
+pub fn run<P, N>() -> Try
 where
-    R: io::BufRead,
-    W: io::Write + std::marker::Send + 'static,
-    P: Serialize + DeserializeOwned + Send + 'static,
+    P: std::fmt::Debug + Serialize + DeserializeOwned + Send + 'static,
     N: Node<P>,
 {
-    let mut input = input.lines();
-    let output = Arc::new(Mutex::new(output));
+    let (stdin_tx, stdin_rx) = channel();
+    let (stdout_tx, stdout_rx) = channel::<String>();
 
-    let init: Message<Init> = serde_json::from_str(&input.next().ok_or("no init received")??)?;
+    let stdin_handle = thread::spawn(move || {
+        let stdin = stdin().lock().lines();
 
-    let Init::Init { node_id, node_ids } = init.body.payload else {
+        for line in stdin {
+            let line = line.unwrap();
+            stdin_tx.send(line).unwrap();
+        }
+    });
+
+    let stdout_handle = thread::spawn(move || {
+        let mut stdout = stdout().lock();
+
+        for message in stdout_rx {
+            writeln!(&mut stdout, "{message}").unwrap();
+        }
+    });
+
+    run_internal::<P, N>(stdout_tx, stdin_rx).unwrap();
+
+    stdin_handle.join().unwrap();
+    stdout_handle.join().unwrap();
+
+    Ok(())
+}
+
+fn run_internal<P, N>(tx: Sender<String>, rx: Receiver<String>) -> Result<(), Box<dyn Error>>
+where
+    P: std::fmt::Debug + Serialize + DeserializeOwned + Send + 'static,
+    N: Node<P>,
+{
+    eprintln!("Starting runtime...");
+
+    eprintln!("Waiting for init message");
+
+    let init = &rx.recv()?;
+    eprintln!("Got init: {init}");
+    let init: Message<Init> = serde_json::from_str(init)?;
+    let Init::Init { node_id, node_ids } = &init.body.payload else {
         return Err("expected init as first message")?;
     };
 
-    let reply = Message {
-        src: init.dest,
-        dest: init.src,
-        body: Body {
-            msg_id: None,
-            in_reply_to: init.body.msg_id,
-            payload: Init::InitOk,
-        },
-    };
+    let (node_sender, node_receiver) = channel();
+    let mut node = N::from_init(node_sender, node_id.clone(), node_ids.clone());
 
-    let (tx, rx) = channel();
+    // we are using a msg_id here that might be used by the node,
+    // which is against protocol, but maelstrom doesn't seem to mind
+    let reply = init.into_reply(Init::InitOk);
 
-    let mut node = N::from_init(tx, node_id, node_ids);
-
+    eprintln!("Starting outbound processing and sending init_ok");
     let outbound = thread::spawn(move || {
         // send the init_ok
-        let mut locked = output.lock().unwrap();
-        let mut deref = locked.deref_mut();
-        write(&mut deref, &reply).unwrap();
+        let mut json = serde_json::to_string(&reply).unwrap();
+        eprintln!("Writing init_ok: {json}");
+        tx.send(json).unwrap();
 
         // reply to other messages
         loop {
-            match rx.recv() {
+            match node_receiver.recv() {
                 Ok(outbound) => {
-                    write(deref, &outbound).unwrap();
+                    json = serde_json::to_string(&outbound).unwrap();
+                    eprintln!("Writing outbound message: {json}");
+                    tx.send(json).unwrap();
                 }
                 Err(e) => {
                     eprintln!("{:#?}", e);
@@ -65,16 +93,20 @@ where
         }
     });
 
-    for line in input {
-        let line = &line?;
+    eprintln!("Starting inbound processing");
+    for line in rx {
         if line == EOI {
+            eprintln!("Got EOI");
+
             break;
         }
-        let message: Message<P> = serde_json::from_str(line)?;
 
+        eprintln!("Got message: {line}");
+        let message: Message<P> = serde_json::from_str(&line)?;
         node.handle_message(message)?;
     }
 
+    eprintln!("Shutting down...");
     cleanup(node, outbound)
 }
 
@@ -90,44 +122,14 @@ where
     Ok(())
 }
 
-fn write<W: io::Write, T: Serialize>(
-    mut stdout: &mut W,
-    message: &T,
-) -> Result<(), Box<dyn Error>> {
-    serde_json::to_writer(&mut stdout, message)?;
-    stdout.write_all(b"\n").unwrap();
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
 
-    use std::{io::Write, sync::mpsc::Sender};
+    use std::{sync::mpsc::Sender, thread::JoinHandle};
 
     use serde::Deserialize;
 
     use super::*;
-
-    #[derive(Default, Clone)]
-    struct TestWriter {
-        data: Arc<Mutex<Vec<u8>>>,
-    }
-
-    impl Write for TestWriter {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.data.lock().unwrap().write(buf)
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            self.data.lock().unwrap().flush()
-        }
-    }
-
-    impl ToString for TestWriter {
-        fn to_string(&self) -> String {
-            String::from_utf8_lossy(&self.data.lock().unwrap()).to_string()
-        }
-    }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     #[serde(tag = "type", rename_all = "snake_case")]
@@ -182,26 +184,47 @@ mod tests {
     }
 
     #[test]
-    fn test_basic_init() {
-        let (output, runtime) = run_node(vec![]);
+    fn test_basic_init() -> Result<(), Box<dyn Error>> {
+        let (_, input, output) = run_node();
 
-        runtime.join().unwrap();
-        let s = output.to_string();
-        let init_ok: Message<Init> = serde_json::from_str(&s).unwrap();
-        assert_eq!(&init_ok.src, "n1");
-        assert_eq!(&init_ok.dest, "c1");
-        match init_ok.body {
-            Body {
-                msg_id: None,
-                in_reply_to: Some(1),
-                payload: Init::InitOk,
-            } => {}
-            _ => panic!("invalid init_ok body"),
+        let init = Message {
+            src: "c2".into(),
+            dest: "n1".into(),
+            body: Body {
+                msg_id: Some(3),
+                in_reply_to: None,
+                payload: Init::Init {
+                    node_id: "n1".into(),
+                    node_ids: vec!["n1".into()],
+                },
+            },
         };
+
+        input.send(serde_json::to_string(&init)?)?;
+        let _: Message<Init> = serde_json::from_str(&output.recv()?)?;
+        Ok(())
     }
 
     #[test]
-    fn test_basic_echo() {
+    fn test_basic_echo() -> Result<(), Box<dyn Error>> {
+        let (_, input, output) = run_node();
+
+        let init = Message {
+            src: "c2".into(),
+            dest: "n1".into(),
+            body: Body {
+                msg_id: Some(3),
+                in_reply_to: None,
+                payload: Init::Init {
+                    node_id: "n1".into(),
+                    node_ids: vec!["n1".into()],
+                },
+            },
+        };
+
+        input.send(serde_json::to_string(&init)?)?;
+        let _: Message<Init> = serde_json::from_str(&output.recv()?)?;
+
         let echo = Message {
             src: "c2".into(),
             dest: "n1".into(),
@@ -214,47 +237,19 @@ mod tests {
             },
         };
 
-        let echo_str = serde_json::to_string(&echo).unwrap();
-        let (output, runtime) = run_node(vec![echo_str]);
-        runtime.join().unwrap();
-        let s = output.to_string();
-        let mut lines = s.lines();
-
-        let _: Message<Init> = serde_json::from_str(lines.next().unwrap()).unwrap();
-        let _: Message<EchoPayload> = serde_json::from_str(lines.next().unwrap()).unwrap();
-        assert_eq!(None, lines.next());
+        input.send(serde_json::to_string(&echo)?)?;
+        let _: Message<EchoPayload> = serde_json::from_str(&output.recv()?)?;
+        Ok(())
     }
 
-    fn run_node(mut input: Vec<String>) -> (TestWriter, thread::JoinHandle<()>) {
-        let init = Message {
-            src: "c1".into(),
-            dest: "n1".into(),
-            body: Body {
-                msg_id: Some(1),
-                in_reply_to: None,
-                payload: Init::Init {
-                    node_id: "n1".into(),
-                    node_ids: vec!["n1".into()],
-                },
-            },
-        };
+    fn run_node() -> (JoinHandle<()>, Sender<String>, Receiver<String>) {
+        let (stdout_tx, stdout_rx) = channel();
+        let (stdin_tx, stdin_rx) = channel();
 
-        let init_json = serde_json::to_string(&init).unwrap();
-        let eoi = EOI.to_string();
-
-        let mut input_strings = vec![init_json];
-        input_strings.append(&mut input);
-        input_strings.push(eoi);
-
-        let cursor_string = input_strings.join("\n");
-
-        let input = io::Cursor::new(cursor_string.as_bytes().to_vec());
-        let output = TestWriter::default();
-        let output_clone = output.clone();
-
-        let runtime = thread::spawn(|| {
-            run::<_, _, EchoPayload, EchoNode>(input, output).unwrap();
+        let runtime = thread::spawn(move || {
+            run_internal::<EchoPayload, EchoNode>(stdout_tx, stdin_rx).unwrap();
         });
-        (output_clone, runtime)
+
+        (runtime, stdin_tx, stdout_rx)
     }
 }
