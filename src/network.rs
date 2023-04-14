@@ -10,6 +10,7 @@ use crate::types::{Message, Payload, Rpc, Try};
 
 type Callbacks<P> = Arc<Mutex<HashMap<usize, Sender<Message<P>>>>>;
 
+/// Network is an abstraction over communication between a node
 #[derive(Debug, Clone)]
 pub struct Network<P> {
     callbacks: Callbacks<P>,
@@ -49,7 +50,7 @@ impl<P: Payload> Network<P> {
         Ok(rx)
     }
 
-    // if the message doesn't have a callback, we give it back!
+    // if the message doesn't have a callback, we give it back to handle regularly
     pub fn check_callback(&self, msg: Message<P>) -> Option<Message<P>> {
         // todo: uhhh
         let Ok(mut callbacks) = self.callbacks.lock() else {

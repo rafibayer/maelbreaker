@@ -1,11 +1,12 @@
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    sync::{mpsc::Sender, Arc, Mutex},
+    sync::{Arc, Mutex},
     thread::{self, JoinHandle},
     time::Duration,
 };
 
 use maelbreaker::{
+    network::Network,
     node::Node,
     payload,
     runtime::Runtime,
@@ -42,7 +43,7 @@ type Unreplicated = Arc<Mutex<HashMap<String, BTreeMap<usize, usize>>>>;
 #[derive(Debug)]
 struct BroadcastNode {
     neighbors: Vec<String>,
-    net: Sender<Message<Payload>>,
+    net: Network<Payload>,
     seq: usize,
 
     messages: HashSet<usize>,
@@ -61,19 +62,19 @@ impl BroadcastNode {
         self.seq += 1;
 
         let reply = request.into_reply(Payload::BroadcastOk);
-        Ok(self.net.send(reply)?)
+        self.net.send(reply)
     }
 
     fn handle_read(&self, request: Message<Payload>) -> Try {
         let reply = request.into_reply(Payload::ReadOk {
             messages: self.messages.clone().into_iter().collect(),
         });
-        Ok(self.net.send(reply)?)
+        self.net.send(reply)
     }
 
     fn handle_topology(&self, request: Message<Payload>) -> Try {
         let reply = request.into_reply(Payload::TopologyOk);
-        Ok(self.net.send(reply)?)
+        self.net.send(reply)
     }
 
     fn handle_replicate(&mut self, request: Message<Payload>) -> Try {
@@ -87,7 +88,7 @@ impl BroadcastNode {
 
         let seq = *seq;
         let reply = request.into_reply(Payload::ReplicateOk { seq });
-        Ok(self.net.send(reply)?)
+        self.net.send(reply)
     }
 
     fn handle_replicate_ok(&mut self, request: Message<Payload>) -> Try {
@@ -130,7 +131,7 @@ impl BroadcastNode {
     }
 
     fn replicator(
-        network: Sender<Message<Payload>>,
+        network: Network<Payload>,
         id: String,
         neighbors: Vec<String>,
         unreplicated: Unreplicated,
@@ -157,13 +158,15 @@ impl BroadcastNode {
                             msg_id: None,
                             in_reply_to: None,
                             payload: Payload::Replicate {
-                                messages: peer_unreplicated.values().into_iter().cloned().collect(),
+                                messages: peer_unreplicated.values().cloned().collect(),
                                 seq: *highest_seq,
                             },
                         },
                     };
 
-                    network.send(replicate)?;
+                    network
+                        .send(replicate)
+                        .map_err(|_| "failed to send replicate")?;
                 }
             }
         })
@@ -171,18 +174,14 @@ impl BroadcastNode {
 }
 
 impl Node<Payload> for BroadcastNode {
-    fn from_init(
-        network: Sender<Message<Payload>>,
-        node_id: String,
-        node_ids: Vec<String>,
-    ) -> Self {
+    fn from_init(network: Network<Payload>, node_id: String, node_ids: Vec<String>) -> Self {
         let neighbors: Vec<String> = node_ids.into_iter().filter(|id| id != &node_id).collect();
         let unreplicated = Unreplicated::default();
 
         // start batch replicator
         BroadcastNode::replicator(
             network.clone(),
-            node_id.clone(),
+            node_id,
             neighbors.clone(),
             unreplicated.clone(),
         );

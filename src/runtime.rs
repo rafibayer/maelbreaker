@@ -7,6 +7,7 @@ use std::{
 const EOI: &str = "EOI";
 
 use crate::{
+    network::Network,
     node::Node,
     types::{Init, Message, Payload, SyncTry, Try},
 };
@@ -55,8 +56,8 @@ where
             return Err("expected init as first message")?;
         };
 
-        let (node_sender, node_receiver) = channel();
-        let mut node = N::from_init(node_sender, node_id.clone(), node_ids.clone());
+        let (network, node_receiver) = Network::new();
+        let mut node = N::from_init(network.clone(), node_id.clone(), node_ids.clone());
 
         // we are using a msg_id here that might be used by the node,
         // which is against protocol, but maelstrom doesn't seem to mind
@@ -66,7 +67,7 @@ where
         let outbound = Runtime::<P, N>::process_output(reply, tx, node_receiver);
 
         eprintln!("Starting inbound processing");
-        Runtime::process_input(rx, &mut node)?;
+        Runtime::process_input(rx, network, &mut node)?;
 
         eprintln!("Shutting down...");
         Runtime::cleanup(node, outbound)
@@ -77,7 +78,7 @@ where
         tx: Sender<String>,
         node_receiver: Receiver<Message<P>>,
     ) -> JoinHandle<SyncTry> {
-        let outbound = thread::spawn::<_, SyncTry>(move || {
+        thread::spawn::<_, SyncTry>(move || {
             // send the init_ok
             let mut json = serde_json::to_string(&reply)?;
             eprintln!("Writing init_ok: {json}");
@@ -90,11 +91,10 @@ where
                 eprintln!("Writing outbound message: {json}");
                 tx.send(json)?;
             }
-        });
-        outbound
+        })
     }
 
-    fn process_input(rx: Receiver<String>, node: &mut N) -> Try {
+    fn process_input(rx: Receiver<String>, network: Network<P>, node: &mut N) -> Try {
         for line in rx {
             if line == EOI {
                 eprintln!("Got EOI");
@@ -104,7 +104,9 @@ where
 
             eprintln!("Got message: {line}");
             let message: Message<P> = serde_json::from_str(&line)?;
-            node.handle_message(message)?;
+            if let Some(message) = network.check_callback(message) {
+                node.handle_message(message)?;
+            }
         }
 
         Ok(())
@@ -137,16 +139,12 @@ mod tests {
     );
 
     struct EchoNode {
-        network: Sender<Message<Payload>>,
+        network: Network<Payload>,
         seq: usize,
     }
 
     impl Node<Payload> for EchoNode {
-        fn from_init(
-            network: Sender<Message<Payload>>,
-            _node_id: String,
-            _node_ids: Vec<String>,
-        ) -> Self {
+        fn from_init(network: Network<Payload>, _node_id: String, _node_ids: Vec<String>) -> Self {
             EchoNode { network, seq: 0 }
         }
 

@@ -8,8 +8,8 @@ pub type Try = Result<(), Box<dyn Error>>;
 pub type Rpc<P> = Result<Receiver<Message<P>>, Box<dyn Error>>;
 pub type SyncTry = Result<(), Box<dyn Error + Send + Sync>>;
 
-pub trait Payload: std::fmt::Debug + Serialize + DeserializeOwned + Send + 'static {}
-impl<P: std::fmt::Debug + Serialize + DeserializeOwned + Send + 'static> Payload for P {}
+pub trait Payload: Clone + std::fmt::Debug + Serialize + DeserializeOwned + Send + 'static {}
+impl<P: Clone + std::fmt::Debug + Serialize + DeserializeOwned + Send + 'static> Payload for P {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Body<Payload> {
