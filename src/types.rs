@@ -1,10 +1,11 @@
-use std::{error::Error, fmt::Debug};
+use std::{error::Error, fmt::Debug, sync::mpsc::Receiver};
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::payload;
 
 pub type Try = Result<(), Box<dyn Error>>;
+pub type Rpc<P> = Result<Receiver<Message<P>>, Box<dyn Error>>;
 pub type SyncTry = Result<(), Box<dyn Error + Send + Sync>>;
 
 pub trait Payload: std::fmt::Debug + Serialize + DeserializeOwned + Send + 'static {}

@@ -1,7 +1,7 @@
 use maelbreaker::{
     node::Node,
     payload,
-    runtime::run,
+    runtime::Runtime,
     types::{Message, Try},
 };
 use std::sync::mpsc::Sender;
@@ -34,5 +34,5 @@ impl Node<Payload> for EchoNode {
 }
 
 fn main() -> Try {
-    run::<Payload, EchoNode>()
+    Runtime::<Payload, EchoNode>::run()
 }
