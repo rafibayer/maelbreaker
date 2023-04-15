@@ -16,9 +16,9 @@ pub enum ErrorCode {
     TxnConflict = 30,
 }
 
-impl ErrorCode {
-    pub fn code(self) -> u8 {
-        self as u8
+impl From<ErrorCode> for usize {
+    fn from(value: ErrorCode) -> Self {
+        value as usize
     }
 }
 
@@ -34,7 +34,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_compare_u8() {
-        assert_eq!(0, ErrorCode::Timeout.code())
+    fn test_compare_usize() {
+        assert_eq!(0, usize::from(ErrorCode::Timeout))
     }
 }
