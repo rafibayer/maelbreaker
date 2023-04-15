@@ -22,7 +22,7 @@ where
         let (stdin_tx, stdin_rx) = channel();
         let (stdout_tx, stdout_rx) = channel();
 
-        let stdin_handle = thread::spawn(move || {
+        thread::spawn(move || {
             let stdin = stdin().lock().lines();
 
             for line in stdin {
@@ -31,7 +31,7 @@ where
             }
         });
 
-        let stdout_handle = thread::spawn(move || {
+        thread::spawn(move || {
             let mut stdout = stdout().lock();
 
             for message in stdout_rx {
@@ -40,10 +40,6 @@ where
         });
 
         Runtime::<P, N>::run_internal(stdout_tx, stdin_rx)?;
-
-        stdin_handle.join().unwrap();
-        stdout_handle.join().unwrap();
-
         Ok(())
     }
 
@@ -64,7 +60,7 @@ where
         let reply = init.into_reply(Init::InitOk);
 
         eprintln!("Starting outbound processing and sending init_ok");
-        let outbound = Runtime::<P, N>::process_output(reply, tx, node_receiver);
+        Runtime::<P, N>::process_output(reply, tx, node_receiver);
 
         eprintln!("Starting inbound processing");
         if let Err(e) = Runtime::process_input(rx, network, node) {
@@ -72,8 +68,7 @@ where
         }
 
         eprintln!("Shutting down...");
-        // Runtime::cleanup(node, outbound)
-        todo!()
+        Ok(())
     }
 
     fn process_output(
@@ -128,19 +123,6 @@ where
         }
 
         eprintln!("done processing input");
-        Ok(())
-    }
-
-    fn cleanup(node: N, outbound: JoinHandle<SyncTry>) -> Try {
-        eprintln!("starting node cleanup");
-
-        drop(node);
-        outbound
-            .join()
-            .map_err(|e| format!("outbound thread error: {e:#?}"))?
-            .map_err(|_| "error processing error :~)")?;
-
-        eprintln!("finished node cleanup");
         Ok(())
     }
 }

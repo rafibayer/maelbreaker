@@ -9,7 +9,6 @@ use std::{
 };
 
 use maelbreaker::{
-    error::ErrorCode,
     network::Network,
     node::Node,
     payload,
