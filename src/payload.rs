@@ -4,7 +4,7 @@ macro_rules! payload {
     ($de:ident, $se:ident, $i:item) => {
         use serde::{Deserialize as $de, Serialize as $se};
 
-        #[derive(Debug, Clone, $de, $se)]
+        #[derive(Debug, Clone, PartialEq, Eq, $de, $se)]
         #[serde(tag = "type", rename_all = "snake_case")]
         $i
     };

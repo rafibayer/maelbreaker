@@ -57,7 +57,7 @@ where
         };
 
         let (network, node_receiver) = Network::new();
-        let mut node = N::from_init(network.clone(), node_id.clone(), node_ids.clone());
+        let node = N::from_init(network.clone(), node_id.clone(), node_ids.clone());
 
         // we are using a msg_id here that might be used by the node,
         // which is against protocol, but maelstrom doesn't seem to mind
@@ -67,10 +67,13 @@ where
         let outbound = Runtime::<P, N>::process_output(reply, tx, node_receiver);
 
         eprintln!("Starting inbound processing");
-        Runtime::process_input(rx, network, &mut node)?;
+        if let Err(e) = Runtime::process_input(rx, network, node) {
+            eprintln!("failed to process input: {e:#?}");
+        }
 
         eprintln!("Shutting down...");
-        Runtime::cleanup(node, outbound)
+        // Runtime::cleanup(node, outbound)
+        todo!()
     }
 
     fn process_output(
@@ -94,30 +97,50 @@ where
         })
     }
 
-    fn process_input(rx: Receiver<String>, network: Network<P>, node: &mut N) -> Try {
-        for line in rx {
-            if line == EOI {
-                eprintln!("Got EOI");
+    fn process_input(rx: Receiver<String>, network: Network<P>, mut node: N) -> Try {
+        let (json_tx, json_rx) = channel();
 
-                break;
-            }
+        thread::spawn(move || {
+            for line in rx {
+                if line == EOI {
+                    eprintln!("Got EOI");
 
-            eprintln!("Got message: {line}");
-            let message: Message<P> = serde_json::from_str(&line)?;
-            if let Some(message) = network.check_callback(message) {
-                node.handle_message(message)?;
+                    break;
+                }
+
+                eprintln!("Got message: {line}");
+                let message: Message<P> = serde_json::from_str(&line).unwrap();
+
+                // oops! RPCs don't work because they wait for response input
+                // but process_input won't process said input until handle_message returns
+                // deadlocked!.
+                // we can make this work by actually passing to the node in another thread, and just
+                // trying the callbacks before the message goes to that thread.
+                // Thread A (read stdin) -> thread B (check_callback) -> thread C (handle_message)
+                if let Some(message) = network.check_callback(message) {
+                    json_tx.send(message).unwrap();
+                }
             }
+        });
+
+        for message in json_rx {
+            node.handle_message(message)?;
         }
 
+        eprintln!("done processing input");
         Ok(())
     }
 
     fn cleanup(node: N, outbound: JoinHandle<SyncTry>) -> Try {
+        eprintln!("starting node cleanup");
+
         drop(node);
         outbound
             .join()
             .map_err(|e| format!("outbound thread error: {e:#?}"))?
             .map_err(|_| "error processing error :~)")?;
+
+        eprintln!("finished node cleanup");
         Ok(())
     }
 }
@@ -132,29 +155,29 @@ mod tests {
     use super::*;
 
     payload!(
-        enum Payload {
+        enum EchoPayload {
             Echo { echo: String },
             EchoOk { echo: String },
         }
     );
 
     struct EchoNode {
-        network: Network<Payload>,
+        network: Network<EchoPayload>,
         seq: usize,
     }
 
-    impl Node<Payload> for EchoNode {
-        fn from_init(network: Network<Payload>, _node_id: String, _node_ids: Vec<String>) -> Self {
+    impl Node<EchoPayload> for EchoNode {
+        fn from_init(network: Network<EchoPayload>, _: String, _: Vec<String>) -> Self {
             EchoNode { network, seq: 0 }
         }
 
-        fn handle_message(&mut self, msg: Message<Payload>) -> Try {
-            let Payload::Echo { echo } = &msg.body.payload else {
+        fn handle_message(&mut self, msg: Message<EchoPayload>) -> Try {
+            let EchoPayload::Echo { echo } = &msg.body.payload else {
                 return Err("expected echo")?;
             };
 
             let echo = echo.clone();
-            let reply = msg.into_reply(Payload::EchoOk { echo });
+            let reply = msg.into_reply(EchoPayload::EchoOk { echo });
 
             self.seq += 1;
             self.network.send(reply)?;
@@ -210,14 +233,14 @@ mod tests {
             body: Body {
                 msg_id: Some(3),
                 in_reply_to: None,
-                payload: Payload::Echo {
+                payload: EchoPayload::Echo {
                     echo: "ding-dong!".into(),
                 },
             },
         };
 
         input.send(serde_json::to_string(&echo)?)?;
-        let _: Message<Payload> = serde_json::from_str(&output.recv()?)?;
+        let _: Message<EchoPayload> = serde_json::from_str(&output.recv()?)?;
         Ok(())
     }
 
@@ -226,7 +249,7 @@ mod tests {
         let (stdin_tx, stdin_rx) = channel();
 
         let runtime = thread::spawn(move || {
-            Runtime::<Payload, EchoNode>::run_internal(stdout_tx, stdin_rx).unwrap();
+            Runtime::<EchoPayload, EchoNode>::run_internal(stdout_tx, stdin_rx).unwrap();
         });
 
         (runtime, stdin_tx, stdout_rx)

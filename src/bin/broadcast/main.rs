@@ -197,14 +197,11 @@ impl Node<Payload> for BroadcastNode {
 
     fn handle_message(&mut self, msg: Message<Payload>) -> Try {
         match &msg.body.payload {
-            Payload::Broadcast { message: _ } => self.handle_broadcast(msg)?,
+            Payload::Broadcast { .. } => self.handle_broadcast(msg)?,
             Payload::Read => self.handle_read(msg)?,
-            Payload::Topology { topology: _ } => self.handle_topology(msg)?,
-            Payload::Replicate {
-                messages: _,
-                seq: _,
-            } => self.handle_replicate(msg)?,
-            Payload::ReplicateOk { seq: _ } => self.handle_replicate_ok(msg)?,
+            Payload::Topology { .. } => self.handle_topology(msg)?,
+            Payload::Replicate { .. } => self.handle_replicate(msg)?,
+            Payload::ReplicateOk { .. } => self.handle_replicate_ok(msg)?,
             _ => {}
         };
 

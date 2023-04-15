@@ -47,6 +47,8 @@ impl<P: Payload> Network<P> {
             return Err("duplicate message id use for rpc")?;
         }
 
+        eprintln!("registered callback for RPC {msg_id}");
+        self.send(msg)?;
         Ok(rx)
     }
 
@@ -57,11 +59,11 @@ impl<P: Payload> Network<P> {
             return Some(msg);
         };
 
-        let Some(msg_id) = msg.body.msg_id else {
+        let Some(replying_to) = msg.body.in_reply_to else {
             return Some(msg);
         };
 
-        let Some(callback) = callbacks.remove(&msg_id) else {
+        let Some(callback) = callbacks.remove(&replying_to) else {
             return Some(msg);
         };
 
@@ -69,6 +71,91 @@ impl<P: Payload> Network<P> {
             return Some(msg);
         }
 
+        eprintln!("sent callback for rpc {replying_to}");
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use crate::{payload, types::Body};
+
+    use super::*;
+
+    payload!(
+        enum PingPong {
+            Ping(usize),
+            Pong(usize),
+        }
+    );
+
+    #[test]
+    fn test_pingpong() -> Try {
+        let (n1_net, n1_out) = Network::new();
+        let (n2_net, n2_out) = Network::new();
+
+        let n2_resp = n1_net.rpc(Message {
+            src: "n1".into(),
+            dest: "n2".into(),
+            body: Body {
+                msg_id: Some(1),
+                in_reply_to: None,
+                payload: PingPong::Ping(0),
+            },
+        })?;
+
+        let n2_reply = n1_out.recv()?.into_reply(PingPong::Pong(0));
+        n2_net.send(n2_reply.clone())?;
+
+        assert_eq!(None, n1_net.check_callback(n2_out.recv()?));
+
+        assert_eq!(n2_resp.recv()?, n2_reply);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_send() -> Try {
+        let msg = Message {
+            src: "c1".into(),
+            dest: "n1".into(),
+            body: Body {
+                msg_id: None,
+                in_reply_to: None,
+                payload: PingPong::Ping(0),
+            },
+        };
+
+        let (network, outbound) = Network::new();
+        network.send(msg.clone())?;
+        let sent = outbound.recv()?;
+        assert_eq!(msg, sent);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_rpc() -> Try {
+        let msg = Message {
+            src: "c1".into(),
+            dest: "n1".into(),
+            body: Body {
+                msg_id: Some(0),
+                in_reply_to: None,
+                payload: PingPong::Ping(0),
+            },
+        };
+
+        let (network, outbound) = Network::new();
+        let response = network.rpc(msg.clone())?;
+
+        let sent = outbound.recv()?;
+        assert_eq!(msg, sent);
+        let reply = msg.into_reply(PingPong::Pong(0));
+        assert_eq!(None, network.check_callback(reply.clone()));
+        assert_eq!(reply, response.recv()?);
+
+        Ok(())
     }
 }

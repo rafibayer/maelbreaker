@@ -11,7 +11,7 @@ pub type SyncTry = Result<(), Box<dyn Error + Send + Sync>>;
 pub trait Payload: Clone + std::fmt::Debug + Serialize + DeserializeOwned + Send + 'static {}
 impl<P: Clone + std::fmt::Debug + Serialize + DeserializeOwned + Send + 'static> Payload for P {}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Body<Payload> {
     pub msg_id: Option<usize>,
     pub in_reply_to: Option<usize>,
@@ -20,7 +20,7 @@ pub struct Body<Payload> {
     pub payload: Payload,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Message<Payload> {
     pub src: String,
     pub dest: String,
