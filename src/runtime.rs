@@ -22,6 +22,7 @@ where
         let (stdin_tx, stdin_rx) = channel();
         let (stdout_tx, stdout_rx) = channel();
 
+        // stdin thread: decouples stdin reads from node message processing
         thread::spawn(move || {
             let stdin = stdin().lock().lines();
 
@@ -31,6 +32,7 @@ where
             }
         });
 
+        // stdout thread: decouples stdout writes from node message processing
         thread::spawn(move || {
             let mut stdout = stdout().lock();
 
@@ -39,11 +41,15 @@ where
             }
         });
 
+        // we give the node a Sender so it can pass outbound messages to stdout
+        // and a receiver so it can pull inbound messages from stdin
         Runtime::<P, N>::run_internal(stdout_tx, stdin_rx)?;
         Ok(())
     }
 
     fn run_internal(tx: Sender<String>, rx: Receiver<String>) -> Try {
+        // we expected init as the first message, we use this message
+        // to construct our node, and handle the reply on the nodes behalf.
         eprintln!("Starting runtime...\nWaiting for init message");
         let init = &rx.recv()?;
         eprintln!("Got init: {init}");
@@ -52,6 +58,7 @@ where
             return Err("expected init as first message")?;
         };
 
+        // the network is how the node communicates with the runtime
         let (network, node_receiver) = Network::new();
         let node = N::from_init(network.clone(), node_id.clone(), node_ids.clone());
 
@@ -76,6 +83,9 @@ where
         tx: Sender<String>,
         node_receiver: Receiver<Message<P>>,
     ) -> JoinHandle<SyncTry> {
+        // output thread: decouples node sending outbound messages from
+        // node receiving inbound messages. This way, a node may be sending messages
+        // even if it isn't receiving any.
         thread::spawn::<_, SyncTry>(move || {
             // send the init_ok
             let mut json = serde_json::to_string(&reply)?;
@@ -95,6 +105,8 @@ where
     fn process_input(rx: Receiver<String>, network: Network<P>, mut node: N) -> Try {
         let (json_tx, json_rx) = channel();
 
+        // callback thread: allows us to process input and check for pending
+        // rpc callbacks even if the node is still handling a message.
         thread::spawn(move || {
             for line in rx {
                 if line == EOI {
@@ -106,12 +118,9 @@ where
                 eprintln!("Got message: {line}");
                 let message: Message<P> = serde_json::from_str(&line).unwrap();
 
-                // oops! RPCs don't work because they wait for response input
-                // but process_input won't process said input until handle_message returns
-                // deadlocked!.
-                // we can make this work by actually passing to the node in another thread, and just
-                // trying the callbacks before the message goes to that thread.
-                // Thread A (read stdin) -> thread B (check_callback) -> thread C (handle_message)
+                // we try checking for pending callbacks for the message, if not,
+                // check_callback returns ownership of the message so that we may deliver
+                // it to the node as a regular message rather than an RPC response
                 if let Some(message) = network.check_callback(message) {
                     json_tx.send(message).unwrap();
                 }
