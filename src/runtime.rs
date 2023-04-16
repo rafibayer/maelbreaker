@@ -43,14 +43,12 @@ where
 
         // we give the node a Sender so it can pass outbound messages to stdout
         // and a receiver so it can pull inbound messages from stdin
+        eprintln!("Starting runtime...\nWaiting for init message");
         Runtime::<P, N>::run_internal(stdout_tx, stdin_rx)?;
         Ok(())
     }
 
     fn run_internal(tx: Sender<String>, rx: Receiver<String>) -> Try {
-        // we expected init as the first message, we use this message
-        // to construct our node, and handle the reply on the nodes behalf.
-        eprintln!("Starting runtime...\nWaiting for init message");
         let init = &rx.recv()?;
         eprintln!("Got init: {init}");
         let init: Message<Init> = serde_json::from_str(init)?;
@@ -141,7 +139,7 @@ mod tests {
 
     use std::{sync::mpsc::Sender, thread::JoinHandle};
 
-    use crate::{payload, types::Body};
+    use crate::{payload, types::BodyBuilder};
 
     use super::*;
 
@@ -180,18 +178,16 @@ mod tests {
     fn test_basic_init() -> Try {
         let (_, input, output) = run_node();
 
-        let init = Message {
-            src: "c2".into(),
-            dest: "n1".into(),
-            body: Body {
-                msg_id: Some(3),
-                in_reply_to: None,
-                payload: Init::Init {
-                    node_id: "n1".into(),
-                    node_ids: vec!["n1".into()],
-                },
-            },
-        };
+        let init = Message::new(
+            "c2",
+            "n1",
+            BodyBuilder::new(Init::Init {
+                node_id: "n1".into(),
+                node_ids: vec!["n1".into()],
+            })
+            .msg_id(3)
+            .build(),
+        );
 
         input.send(serde_json::to_string(&init)?)?;
         let _: Message<Init> = serde_json::from_str(&output.recv()?)?;
@@ -202,33 +198,29 @@ mod tests {
     fn test_basic_echo() -> Try {
         let (_, input, output) = run_node();
 
-        let init = Message {
-            src: "c2".into(),
-            dest: "n1".into(),
-            body: Body {
-                msg_id: Some(3),
-                in_reply_to: None,
-                payload: Init::Init {
-                    node_id: "n1".into(),
-                    node_ids: vec!["n1".into()],
-                },
-            },
-        };
+        let init = Message::new(
+            "c2",
+            "n1",
+            BodyBuilder::new(Init::Init {
+                node_id: "n1".into(),
+                node_ids: vec!["n1".into()],
+            })
+            .msg_id(3)
+            .build(),
+        );
 
         input.send(serde_json::to_string(&init)?)?;
         let _: Message<Init> = serde_json::from_str(&output.recv()?)?;
 
-        let echo = Message {
-            src: "c2".into(),
-            dest: "n1".into(),
-            body: Body {
-                msg_id: Some(3),
-                in_reply_to: None,
-                payload: EchoPayload::Echo {
-                    echo: "ding-dong!".into(),
-                },
-            },
-        };
+        let echo = Message::new(
+            "c2",
+            "n1",
+            BodyBuilder::new(EchoPayload::Echo {
+                echo: "ding-dong!".into(),
+            })
+            .msg_id(3)
+            .build(),
+        );
 
         input.send(serde_json::to_string(&echo)?)?;
         let _: Message<EchoPayload> = serde_json::from_str(&output.recv()?)?;

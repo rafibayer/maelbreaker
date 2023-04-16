@@ -10,7 +10,7 @@ use maelbreaker::{
     node::Node,
     payload,
     runtime::Runtime,
-    types::{Body, Message, SyncTry, Try},
+    types::{BodyBuilder, Message, SyncTry, Try},
 };
 use rand::{thread_rng, Rng};
 
@@ -151,18 +151,15 @@ impl BroadcastNode {
                         continue;
                     };
 
-                    let replicate = Message {
-                        src: id.clone(),
-                        dest: peer.clone(),
-                        body: Body {
-                            msg_id: None,
-                            in_reply_to: None,
-                            payload: Payload::Replicate {
-                                messages: peer_unreplicated.values().cloned().collect(),
-                                seq: *highest_seq,
-                            },
-                        },
-                    };
+                    let replicate = Message::new(
+                        &id,
+                        peer,
+                        BodyBuilder::new(Payload::Replicate {
+                            messages: peer_unreplicated.values().cloned().collect(),
+                            seq: *highest_seq,
+                        })
+                        .build(),
+                    );
 
                     network
                         .send(replicate)

@@ -20,6 +20,40 @@ pub struct Body<Payload> {
     pub payload: Payload,
 }
 
+pub struct BodyBuilder<P> {
+    msg_id: Option<usize>,
+    in_reply_to: Option<usize>,
+    payload: P,
+}
+
+impl<P> BodyBuilder<P> {
+    pub fn new(payload: P) -> Self {
+        BodyBuilder {
+            msg_id: None,
+            in_reply_to: None,
+            payload,
+        }
+    }
+
+    pub fn msg_id(mut self, msg_id: usize) -> Self {
+        self.msg_id = Some(msg_id);
+        self
+    }
+
+    pub fn in_reply_to(mut self, in_reply_to: usize) -> Self {
+        self.in_reply_to = Some(in_reply_to);
+        self
+    }
+
+    pub fn build(self) -> Body<P> {
+        Body {
+            msg_id: self.msg_id,
+            in_reply_to: self.in_reply_to,
+            payload: self.payload,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Message<Payload> {
     pub src: String,
@@ -28,12 +62,20 @@ pub struct Message<Payload> {
 }
 
 impl<Payload> Message<Payload> {
-    pub fn into_reply(self, payload: Payload) -> Message<Payload> {
+    pub fn new(src: impl Into<String>, dest: impl Into<String>, body: Body<Payload>) -> Self {
+        Message {
+            src: src.into(),
+            dest: dest.into(),
+            body,
+        }
+    }
+
+    pub fn into_reply(self, payload: Payload) -> Self {
         let next_id = self.body.msg_id.map(|id| id + 1);
         self.into_reply_with_id(payload, next_id)
     }
 
-    pub fn into_reply_with_id(self, payload: Payload, msg_id: Option<usize>) -> Message<Payload> {
+    pub fn into_reply_with_id(self, payload: Payload, msg_id: Option<usize>) -> Self {
         Message {
             src: self.dest,
             dest: self.src,

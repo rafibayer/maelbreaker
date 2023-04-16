@@ -13,7 +13,7 @@ use maelbreaker::{
     node::Node,
     payload,
     runtime::Runtime,
-    types::{Body, Message, Try},
+    types::{BodyBuilder, Message, Try},
 };
 
 // To use a service, simply send an RPC request to the node ID of the service you want to use:
@@ -36,15 +36,14 @@ payload!(
             key: String,
         },
 
-        #[serde(rename = "cas")]
-        KvCas {
+        Cas {
             key: String,
             from: usize,
             to: usize,
             create_if_not_exists: bool,
         },
         #[serde(rename = "cas_ok")]
-        KvCasOk,
+        CasOk,
 
         Error {
             code: usize,
@@ -56,8 +55,12 @@ payload!(
 struct GCountNode {
     id: String,
     ids: Vec<String>,
-    cache: HashMap<String, usize>, // last seed value for seq-db keys
+
+    /// last seen value for seq-db keys
+    cache: HashMap<String, usize>,
     network: Network<Payload>,
+
+    /// Total delta that we have not yet written to the DB
     unapplied: Arc<AtomicUsize>,
     seq: Arc<AtomicUsize>,
 }
@@ -88,15 +91,6 @@ impl Node<Payload> for GCountNode {
     }
 }
 
-/*
-we will maintain a sum of unapplied writes.
-    - we will read the current value in DB
-    - we will try to CAS (current, current + unapplied)
-        - we will keep trying until we get an ack
-        - OR error = PreconditionFailed
-            - at which point we will retry from the top
-*/
-
 impl GCountNode {
     fn worker(
         id: String,
@@ -106,14 +100,14 @@ impl GCountNode {
     ) {
         thread::spawn(move || {
             // seed DB to ensure key is created, we don't care if we fail
-            let seed = GCountNode::cas_db(&seq, &id, &id, 0, 0, &network);
+            let seed = GCountNode::cas_db(&id, &network, &seq, &id, 0, 0);
             eprintln!("seed result: {seed:#?}");
             eprintln!("initializing gcount worker {id}");
 
             loop {
                 let to_apply = unapplied.load(SeqCst);
                 if to_apply > 0 {
-                    let Ok(from) = GCountNode::read_db(&id, &network, seq.clone(), &id) else {
+                    let Ok(from) = GCountNode::read_db(&id, &network, &seq, &id) else {
                         continue;
                     };
 
@@ -123,17 +117,15 @@ impl GCountNode {
                     // we know our write was applied since we are the only node writing
                     // to this seq-kv key
                     loop {
-                        let result = GCountNode::cas_db(&seq, &id, &id, from, to, &network);
-                        if let Err(e) = result {
-                            eprintln!("failed to send/recv cas: {e:#?}");
+                        let result = GCountNode::cas_db(&id, &network, &seq, &id, from, to);
+                        let Ok(result) = result else {
+                            eprintln!("failed to send/recv cas: {:#?}", result.unwrap_err());
                             continue;
-                        }
-
-                        let result = result.unwrap();
+                        };
 
                         match result.body.payload {
                             // todo: we are assuming error == precondition failed
-                            Payload::KvCasOk | Payload::Error { .. } => {
+                            Payload::CasOk | Payload::Error { .. } => {
                                 unapplied.fetch_sub(to_apply, SeqCst);
                                 break;
                             }
@@ -148,29 +140,22 @@ impl GCountNode {
     fn read_db(
         id: &str,
         network: &Network<Payload>,
-        seq: Arc<AtomicUsize>,
+        seq: &Arc<AtomicUsize>,
         key: &str,
     ) -> Result<usize, Box<dyn Error>> {
         let seq = seq.fetch_add(1, SeqCst);
         eprintln!("reading from seq-kv {seq}");
 
-        let read = Message {
-            src: id.into(),
-            dest: "seq-kv".into(),
-            body: Body {
-                msg_id: Some(seq),
-                in_reply_to: None,
-                payload: Payload::KvRead { key: key.into() },
-            },
-        };
+        let body = BodyBuilder::new(Payload::KvRead { key: key.into() })
+            .msg_id(seq)
+            .build();
+        let read = Message::new(id, "seq-kv", body);
 
         eprintln!("waiting for response from seq-kv {seq}");
         let Payload::ReadOk { value } = network
             .rpc(read)
             .map_err(|_| "failed to read")?
             .recv()?.body.payload else {
-                // what about errors? maybe just log and continue; here?
-                // should probably be recv_timeout due to partitions
                 return Err("expected read_ok")?;
             };
 
@@ -178,28 +163,24 @@ impl GCountNode {
     }
 
     fn cas_db(
-        seq: &Arc<AtomicUsize>,
         id: &str,
+        network: &Network<Payload>,
+        seq: &Arc<AtomicUsize>,
         key: &str,
         previous: usize,
         target: usize,
-        network: &Network<Payload>,
     ) -> Result<Message<Payload>, Box<dyn Error>> {
         let seq = seq.fetch_add(1, SeqCst);
-        let cas = Message {
-            src: id.into(),
-            dest: "seq-kv".into(),
-            body: Body {
-                msg_id: Some(seq),
-                in_reply_to: None,
-                payload: Payload::KvCas {
-                    key: key.into(),
-                    from: previous,
-                    to: target,
-                    create_if_not_exists: true,
-                },
-            },
-        };
+
+        let body = BodyBuilder::new(Payload::Cas {
+            key: key.into(),
+            from: previous,
+            to: target,
+            create_if_not_exists: true,
+        })
+        .msg_id(seq)
+        .build();
+        let cas = Message::new(id, "seq-kv", body);
 
         let cas_callback = network.rpc(cas).map_err(|_| "failed to send cas rpc")?;
         let cas_resp = cas_callback
@@ -223,7 +204,7 @@ impl GCountNode {
 
         // read db entry for each node, or returned the cached value
         for id in &self.ids {
-            let read_result = GCountNode::read_db(&self.id, &self.network, self.seq.clone(), id);
+            let read_result = GCountNode::read_db(&self.id, &self.network, &self.seq, id);
             let read = match read_result {
                 Ok(read) => {
                     // update cache
