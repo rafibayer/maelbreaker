@@ -1,3 +1,6 @@
+//! Common type definitions for messages,
+//! as well as helper types and functions used throughout the crate
+
 use std::{error::Error, fmt::Debug, sync::mpsc::Receiver};
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -8,6 +11,7 @@ pub type Try = Result<(), Box<dyn Error>>;
 pub type Rpc<P> = Result<Receiver<Message<P>>, Box<dyn Error>>;
 pub type SyncTry = Result<(), Box<dyn Error + Send + Sync>>;
 
+/// Trait for non-required message body fields
 pub trait Payload: Clone + std::fmt::Debug + Serialize + DeserializeOwned + Send + 'static {}
 impl<P: Clone + std::fmt::Debug + Serialize + DeserializeOwned + Send + 'static> Payload for P {}
 
@@ -20,6 +24,7 @@ pub struct Body<Payload> {
     pub payload: Payload,
 }
 
+/// Helper to build the body of a message
 pub struct BodyBuilder<P> {
     msg_id: Option<usize>,
     in_reply_to: Option<usize>,
@@ -27,6 +32,7 @@ pub struct BodyBuilder<P> {
 }
 
 impl<P> BodyBuilder<P> {
+    /// Construct a body with a payload
     pub fn new(payload: P) -> Self {
         BodyBuilder {
             msg_id: None,
@@ -35,16 +41,19 @@ impl<P> BodyBuilder<P> {
         }
     }
 
+    /// Add a msg_id field to the body
     pub fn msg_id(mut self, msg_id: usize) -> Self {
         self.msg_id = Some(msg_id);
         self
     }
 
+    /// Add a in_reply_to field to the body
     pub fn in_reply_to(mut self, in_reply_to: usize) -> Self {
         self.in_reply_to = Some(in_reply_to);
         self
     }
 
+    /// Construct the final message Body
     pub fn build(self) -> Body<P> {
         Body {
             msg_id: self.msg_id,
@@ -89,6 +98,7 @@ impl<Payload> Message<Payload> {
 }
 
 payload!(
+    /// Payload for init and init_ok RPC
     pub enum Init {
         Init {
             node_id: String,

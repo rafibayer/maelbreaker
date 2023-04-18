@@ -1,3 +1,4 @@
+//! Defines the Network struct and implementation
 use std::{
     collections::HashMap,
     sync::{
@@ -10,7 +11,7 @@ use crate::types::{Message, Payload, Rpc, Try};
 
 type Callbacks<P> = Arc<Mutex<HashMap<usize, Sender<Message<P>>>>>;
 
-/// Network is an abstraction over communication between a node
+/// Network is an abstraction used by Node to communicate with clients, other nodes, and Maelstrom services
 #[derive(Debug, Clone)]
 pub struct Network<P> {
     callbacks: Callbacks<P>,
@@ -18,6 +19,8 @@ pub struct Network<P> {
 }
 
 impl<P: Payload> Network<P> {
+    /// Constructs a new network, returning it and a Receiver
+    /// that will contain outbound messages sent by the Network.
     pub fn new() -> (Self, Receiver<Message<P>>) {
         let (tx, rx) = channel();
         let network = Self {
@@ -28,6 +31,8 @@ impl<P: Payload> Network<P> {
         (network, rx)
     }
 
+    /// Try to send a message on the network,
+    /// fails if the channel is closed.
     pub fn send(&self, msg: Message<P>) -> Try {
         Ok(self
             .outbound
@@ -35,6 +40,10 @@ impl<P: Payload> Network<P> {
             .map_err(|_| "failed to send message")?)
     }
 
+    /// Sends a message on the network, returning a Receiver
+    /// that will contain the response if one is received.
+    /// fails if the message cannot be sent, or if there is no msg_id
+    /// on the outbound message.
     pub fn rpc(&self, msg: Message<P>) -> Rpc<P> {
         let mut callbacks = self
             .callbacks
@@ -52,9 +61,10 @@ impl<P: Payload> Network<P> {
         Ok(rx)
     }
 
-    // if the message doesn't have a callback, we give it back to handle regularly
+    /// Checks if an incoming message is a response to a previously sent RPC.
+    /// sends the message as a callback and returns None if so, else
+    /// returns the message to the caller
     pub fn check_callback(&self, msg: Message<P>) -> Option<Message<P>> {
-        // todo: uhhh
         let Ok(mut callbacks) = self.callbacks.lock() else {
             return Some(msg);
         };

@@ -1,3 +1,5 @@
+//! Defines the runtime for a Maelstrom node
+
 use std::{
     io::{stdin, stdout, BufRead, Write},
     sync::mpsc::{channel, Receiver, Sender},
@@ -18,6 +20,8 @@ where
     P: Payload,
     N: Node<P>,
 {
+    /// Run a node using stdin/stdout.
+    /// This is the standard entrypoint for use with Maelstrom.
     pub fn run() -> Try {
         let (stdin_tx, stdin_rx) = channel();
         let (stdout_tx, stdout_rx) = channel();
