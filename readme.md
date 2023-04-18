@@ -65,3 +65,10 @@ fn main() -> Try {
     Runtime::<Payload, EchoNode>::run()
 }
 ```
+
+## Acknowledgements
+- Jespen, Maelstrom
+- Gossip Glomers, fly.io
+- Other Rust implementations: 
+  - [PierreZ/maelstrom-rs](https://github.com/PierreZ/maelstrom-rs)
+  - [jonhoo/rustengan](https://github.com/jonhoo/rustengan)
