@@ -7,8 +7,8 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::payload;
 
-pub type Try = Result<(), Box<dyn Error>>;
-pub type Rpc<P> = Result<Receiver<Message<P>>, Box<dyn Error>>;
+pub type Try = anyhow::Result<()>;
+pub type Rpc<P> = anyhow::Result<Receiver<Message<P>>>;
 pub type SyncTry = Result<(), Box<dyn Error + Send + Sync>>;
 
 /// Trait for non-required message body fields
@@ -107,6 +107,19 @@ payload!(
         InitOk,
     }
 );
+
+// pub trait MapAnyhow<T, E, O: FnOnce(E) -> F, F> {
+//     fn map_any(self, op: O) -> anyhow::Result<T>;
+// }
+
+// impl<T, E, O: FnOnce(E) -> F, F: Into<anyhow::Error>> MapAnyhow<T, E, O, F> for Result<T, E> {
+//     fn map_any(self, op: O) -> Result<T, anyhow::Error> {
+//         match self {
+//             Ok(t) => Ok(t),
+//             Err(e) => Err(anyhow::anyhow!(op(e))),
+//         }
+//     }
+// }
 
 #[cfg(test)]
 mod tests {

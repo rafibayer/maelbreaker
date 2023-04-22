@@ -8,6 +8,8 @@ use std::{
 
 const EOI: &str = "EOI";
 
+use anyhow::bail;
+
 use crate::{
     network::Network,
     node::Node,
@@ -57,7 +59,7 @@ where
         eprintln!("Got init: {init}");
         let init: Message<Init> = serde_json::from_str(init)?;
         let Init::Init { node_id, node_ids } = &init.body.payload else {
-            return Err("expected init as first message")?;
+            bail!("expected init as first message");
         };
 
         // the network is how the node communicates with the runtime
@@ -166,7 +168,7 @@ mod tests {
 
         fn handle_message(&mut self, msg: Message<EchoPayload>) -> Try {
             let EchoPayload::Echo { echo } = &msg.body.payload else {
-                return Err("expected echo")?;
+                bail!("expected echo");
             };
 
             let echo = echo.clone();

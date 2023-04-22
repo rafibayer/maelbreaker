@@ -9,6 +9,7 @@ use std::{
     thread,
 };
 
+use anyhow::{anyhow, bail};
 use maelbreaker::{
     network::Network,
     node::Node,
@@ -217,7 +218,7 @@ impl Node<Payload> for KafkaNode {
 impl KafkaNode {
     fn handle_send(&mut self, msg: Message<Payload>) -> Try {
         let Payload::Send { key, msg: message } = &msg.body.payload else {
-            return Err("expected send")?;
+            bail!("expected send");
         };
 
         let partition = get_partition(key, &self.node_ids);
@@ -234,10 +235,10 @@ impl KafkaNode {
                 partition,
             };
 
-            return Ok(self
+            return self
                 .send_worker
                 .send(job)
-                .map_err(|_| "failed to run poll job")?);
+                .map_err(|_| anyhow!("failed to run poll job"));
         }
 
         // apply locally
@@ -250,7 +251,7 @@ impl KafkaNode {
 
     fn handle_poll(&mut self, msg: Message<Payload>) -> Try {
         let Payload::Poll { offsets } = &msg.body.payload else {
-            return Err("expected poll")?;
+            bail!("expected poll");
         };
 
         let mut remote_logs = false;
@@ -282,7 +283,7 @@ impl KafkaNode {
             Ok(self
                 .poll_worker
                 .send(job)
-                .map_err(|_| "failed to run poll job")?)
+                .map_err(|_| anyhow!("failed to run poll job"))?)
         } else {
             // case for when we only have local logs to serve
             let reply = msg.into_reply(Payload::PollOk { msgs });
@@ -292,7 +293,7 @@ impl KafkaNode {
 
     fn handle_commit_offsets(&mut self, msg: Message<Payload>) -> Try {
         let Payload::CommitOffsets { offsets } = &msg.body.payload else {
-            return Err("expected commit_offsets")?
+            bail!("expected commit_offsets");
         };
 
         for (log_key, commit_offset) in offsets {
@@ -323,7 +324,7 @@ impl KafkaNode {
 
     fn handle_list_committed_offsets(&mut self, msg: Message<Payload>) -> Try {
         let Payload::ListCommittedOffsets { keys } = &msg.body.payload else {
-            return Err("expected list_committed_offsets")?
+            bail!("expected list_committed_offsets");
         };
 
         let mut remote_commits = false;
@@ -348,7 +349,7 @@ impl KafkaNode {
             Ok(self
                 .list_committed_worker
                 .send(job)
-                .map_err(|_| "failed to run list committed job")?)
+                .map_err(|_| anyhow!("failed to run list committed job"))?)
         } else {
             let reply = msg.into_reply(Payload::ListCommittedOffsetsOk { offsets });
             self.network.send(reply)

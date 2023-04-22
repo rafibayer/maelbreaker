@@ -1,6 +1,6 @@
 # Maelbreaker
 
-<img src="maelbreaker.png"  width="200" height="200">
+<img src="maelbreaker.png" width="200" height="200">
 
 A Rust runtime library for [Maelstrom](https://github.com/jepsen-io/maelstrom)
 

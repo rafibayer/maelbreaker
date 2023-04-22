@@ -3,9 +3,12 @@ use std::{
     collections::HashMap,
     sync::{
         mpsc::{channel, Receiver, SendError, Sender},
-        Arc, Mutex,
+        Arc,
     },
 };
+
+use anyhow::{anyhow, bail};
+use parking_lot::Mutex;
 
 use crate::types::{Message, Payload, Rpc, Try};
 
@@ -34,10 +37,9 @@ impl<P: Payload> Network<P> {
     /// Try to send a message on the network,
     /// fails if the channel is closed.
     pub fn send(&self, msg: Message<P>) -> Try {
-        Ok(self
-            .outbound
+        self.outbound
             .send(msg)
-            .map_err(|_| "failed to send message")?)
+            .map_err(|_| anyhow!("failed to send message"))
     }
 
     /// Sends a message on the network, returning a Receiver
@@ -45,15 +47,12 @@ impl<P: Payload> Network<P> {
     /// fails if the message cannot be sent, or if there is no msg_id
     /// on the outbound message.
     pub fn rpc(&self, msg: Message<P>) -> Rpc<P> {
-        let mut callbacks = self
-            .callbacks
-            .lock()
-            .map_err(|_| "error locking callbacks")?;
+        let mut callbacks = self.callbacks.lock();
 
         let (tx, rx) = channel();
-        let msg_id = msg.body.msg_id.ok_or("rpc must have msg_id")?;
+        let msg_id = msg.body.msg_id.ok_or(anyhow!("rpc must have msg_id"))?;
         if callbacks.insert(msg_id, tx).is_some() {
-            return Err("duplicate message id use for rpc")?;
+            bail!("duplicate message id use for rpc");
         }
 
         eprintln!("registered callback for RPC {msg_id}");
@@ -65,9 +64,7 @@ impl<P: Payload> Network<P> {
     /// sends the message as a callback and returns None if so, else
     /// returns the message to the caller
     pub fn check_callback(&self, msg: Message<P>) -> Option<Message<P>> {
-        let Ok(mut callbacks) = self.callbacks.lock() else {
-            return Some(msg);
-        };
+        let mut callbacks = self.callbacks.lock();
 
         let Some(replying_to) = msg.body.in_reply_to else {
             return Some(msg);
