@@ -1,7 +1,7 @@
 //! Common type definitions for messages,
 //! as well as helper types and functions used throughout the crate
 
-use std::{error::Error, fmt::Debug, sync::mpsc::Receiver};
+use std::{fmt::Debug, sync::mpsc::Receiver};
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
@@ -9,7 +9,6 @@ use crate::payload;
 
 pub type Try = anyhow::Result<()>;
 pub type Rpc<P> = anyhow::Result<Receiver<Message<P>>>;
-pub type SyncTry = Result<(), Box<dyn Error + Send + Sync>>;
 
 /// Trait for non-required message body fields
 pub trait Payload: Clone + std::fmt::Debug + Serialize + DeserializeOwned + Send + 'static {}
@@ -107,19 +106,6 @@ payload!(
         InitOk,
     }
 );
-
-// pub trait MapAnyhow<T, E, O: FnOnce(E) -> F, F> {
-//     fn map_any(self, op: O) -> anyhow::Result<T>;
-// }
-
-// impl<T, E, O: FnOnce(E) -> F, F: Into<anyhow::Error>> MapAnyhow<T, E, O, F> for Result<T, E> {
-//     fn map_any(self, op: O) -> Result<T, anyhow::Error> {
-//         match self {
-//             Ok(t) => Ok(t),
-//             Err(e) => Err(anyhow::anyhow!(op(e))),
-//         }
-//     }
-// }
 
 #[cfg(test)]
 mod tests {

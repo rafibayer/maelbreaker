@@ -4,7 +4,7 @@
 
 A Rust runtime library for [Maelstrom](https://github.com/jepsen-io/maelstrom)
 
-[Sample Gossip Glomers Solutions](/src/bin)
+[Sample Gossip Glomers Solutions](/examples)
 
 ## Features
 - Deserialize messages into strongly typed enums
@@ -13,7 +13,7 @@ A Rust runtime library for [Maelstrom](https://github.com/jepsen-io/maelstrom)
 - Decoupled input/output threads
 
 ## Example: [Echo](https://fly.io/dist-sys/1/)
-Example usage to solve the first of the Gossip Glomers challenges (*more examples in [/src/bin](/src/bin)*)
+Example usage to solve the first of the Gossip Glomers challenges (*more examples in [/examples](/examples)*)
 ```rust
 // main.rs
 use maelbreaker::{
@@ -47,7 +47,7 @@ impl Node<Payload> for EchoNode {
 
     fn handle_message(&mut self, msg: Message<Payload>) -> Try {
         let Payload::Echo { echo } = &msg.body.payload else {
-            return Err("expected echo")?;
+            bail!("expected echo");
         };
 
         let echo = echo.clone();

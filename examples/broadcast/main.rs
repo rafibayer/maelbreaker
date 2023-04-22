@@ -11,7 +11,7 @@ use maelbreaker::{
     node::Node,
     payload,
     runtime::Runtime,
-    types::{BodyBuilder, Message, SyncTry, Try},
+    types::{BodyBuilder, Message, Try},
 };
 use parking_lot::Mutex;
 use rand::{thread_rng, Rng};
@@ -131,8 +131,8 @@ impl BroadcastNode {
         id: String,
         neighbors: Vec<String>,
         unreplicated: Unreplicated,
-    ) -> JoinHandle<SyncTry> {
-        thread::spawn::<_, SyncTry>(move || loop {
+    ) -> JoinHandle<Try> {
+        thread::spawn::<_, Try>(move || loop {
             thread::sleep(Duration::from_millis(600 + thread_rng().gen_range(0..100)));
             {
                 let locked = unreplicated.lock();
@@ -158,7 +158,7 @@ impl BroadcastNode {
 
                     network
                         .send(replicate)
-                        .map_err(|_| "failed to send replicate")?;
+                        .map_err(|_| anyhow!("failed to send replicate"))?;
                 }
             }
         })

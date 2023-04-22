@@ -13,7 +13,7 @@ use anyhow::bail;
 use crate::{
     network::Network,
     node::Node,
-    types::{Init, Message, Payload, SyncTry, Try},
+    types::{Init, Message, Payload, Try},
 };
 
 pub struct Runtime<P, N>(std::marker::PhantomData<P>, std::marker::PhantomData<N>);
@@ -86,11 +86,11 @@ where
         reply: Message<Init>,
         tx: Sender<String>,
         node_receiver: Receiver<Message<P>>,
-    ) -> JoinHandle<SyncTry> {
+    ) -> JoinHandle<Try> {
         // output thread: decouples node sending outbound messages from
         // node receiving inbound messages. This way, a node may be sending messages
         // even if it isn't receiving any.
-        thread::spawn::<_, SyncTry>(move || {
+        thread::spawn::<_, Try>(move || {
             // send the init_ok
             let mut json = serde_json::to_string(&reply)?;
             eprintln!("Writing init_ok: {json}");
