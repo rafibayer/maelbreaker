@@ -2,6 +2,10 @@
 
 <img src="maelbreaker.png" width="200" height="200">
 
+<a href="https://crates.io/crates/maelbreaker">
+    <img src="https://img.shields.io/crates/v/maelbreaker.svg" alt="Crates.io">
+</a>
+
 A Rust runtime library for [Maelstrom](https://github.com/jepsen-io/maelstrom)
 
 [Sample Gossip Glomers Solutions](/examples)
